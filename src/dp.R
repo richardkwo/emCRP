@@ -1,12 +1,12 @@
 library(MASS)
 library(ggplot2)
 
-sample.dp.normal.mixture <- function(N, alpha, sd=1, prior.mean=0, prior.sd=1) {
+sample.dp.normal.mixture <- function(N, alpha, std=1, prior.mean=0, prior.std=1) {
     # DP mixture of MVN Gaussians with isotropic cov
     i=1
     p <- length(prior.mean)
-    prior.Sigma <- prior.sd^2 * diag(p)
-    Sigma <- sd^2 * diag(p)
+    prior.Sigma <- prior.std^2 * diag(p)
+    Sigma <- std^2 * diag(p)
     while(i<=N) {
         if (i==1) {
             # creating the first cluster 
@@ -53,8 +53,8 @@ sample.dp.normal.mixture <- function(N, alpha, sd=1, prior.mean=0, prior.sd=1) {
                 N=N, 
                 alpha = alpha, 
                 prior.mean = prior.mean, 
-                prior.sd = prior.sd, 
-                sd = sd,
+                prior.std = prior.std, 
+                std = std,
                 num.clusters=num.clusters,
                 z=cluster.assignments, 
                 cluster.sizes=cluster.sizes, 

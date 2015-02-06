@@ -1,6 +1,6 @@
 require(ggplot2)
 
-get.gaussian.posterior <- function(prior.mean, prior.sd, sd, x, weights=1) {
+get.gaussian.posterior <- function(prior.mean, prior.std, std, x, weights=1) {
     # x must take the form of N x p
     if (is.null(nrow(x))) {
         x <- rbind(x)
@@ -12,9 +12,9 @@ get.gaussian.posterior <- function(prior.mean, prior.sd, sd, x, weights=1) {
         stopifnot(length(weights)==n)
     }
     nc <- sum(weights)
-    posterior.sd <- 1/sqrt(1/prior.sd^2 + nc/sd^2)
-    posterior.mean <- posterior.sd^2 * (prior.mean/prior.sd^2 + colSums(weights * x)/sd^2)
-    return(list(mean=posterior.mean, sd=posterior.sd))
+    posterior.std <- 1/sqrt(1/prior.std^2 + nc/std^2)
+    posterior.mean <- posterior.std^2 * (prior.mean/prior.std^2 + colSums(weights * x)/std^2)
+    return(list(mean=posterior.mean, std=posterior.std))
 }
 
 gaussian.prob.kernel <- function(x, s2) {

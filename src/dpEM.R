@@ -1,8 +1,12 @@
 library(MASS)
+library(mvtnorm)
+library(foreach)
+library(doMC)
+registerDoMC()
 source("myutils.R")
 
 # fast EM-style inference for DP mixture of Gaussians
-dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.sd=NULL, sd=NULL, 
+dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.std=NULL, std=NULL, 
                         posterior.predictive=FALSE, cluster.size.threshold=1, 
                         max.iter=100, max.inner.iter=100, max.stable.iter=10, inner.tol=1e-3, 
                         verbose=0) {
@@ -13,18 +17,18 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.sd=NULL, sd=NULL,
     if (is.null(prior.mean)) {
         prior.mean <- X$prior.mean
     }
-    if (is.null(prior.sd)) {
-        prior.sd <- X$prior.sd
+    if (is.null(prior.std)) {
+        prior.std <- X$prior.std
     }
-    if (is.null(sd)) {
-        sd <- X$sd
+    if (is.null(std)) {
+        std <- X$std
     }
     p <- length(prior.mean)
     # init
     W <- cbind(rep(0, N)) # of shape N x (K+1)
     # posterior of theta_k ~ N(cluster.means[k], cluster.sds[k] x I)
     cluster.means <- NULL # (K+1) x p, the MLE estimate of the mean of clusters
-    cluster.sds <- NULL # (K+1) x 1, the posterior sd of the mean of cluster
+    cluster.sds <- NULL # (K+1) x 1, the posterior std of the mean of cluster
     K <- 0
     iter <- 0
     # history loggers
@@ -38,28 +42,25 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.sd=NULL, sd=NULL,
         while (change>inner.tol & inner.iter<max.inner.iter) {
             inner.iter <- inner.iter + 1
             # E step
-            W.old <- W
-            for (i in 1:N) {
+            old.cluster.sizes <- colSums(W)
+            W <- foreach (i = 1:N, .combine=rbind) %dopar% { 
                 prob.vec <- rep(0, K+1)
                 # prob of *
-                prob.vec[K+1] <-  alpha * gaussian.prob.kernel(x=(X$x[i,]-prior.mean), 
-                                                               s2=sd^2 + prior.sd^2)
+                prob.vec[K+1] <-  alpha * dmvnorm(X$x[i,], prior.mean, (std^2+prior.std^2)*diag(p))
                 # prob of clusters
                 if (K>0) {
                     for (k in 1:K) {
                         if (posterior.predictive) {
                             # integrated likelihood against posterior of the cluster
-                            prob.vec[k] <- sum(W.old[,k]) * gaussian.prob.kernel(x=(X$x[i,]-cluster.means[k, ]), 
-                                                                                 s2=sd^2 + cluster.sds[k]^2)
+                            prob.vec[k] <- old.cluster.sizes[k] * dmvnorm(X$x[i,], cluster.means[k,], (std^2 + cluster.sds[k]^2)*diag(p))
                         } else {
                             # likelihood under point estimate
-                            prob.vec[k] <- sum(W.old[,k]) * gaussian.prob.kernel(x=(X$x[i,]-cluster.means[k,]), 
-                                                                                 s2=sd^2)
+                            prob.vec[k] <- old.cluster.sizes[k] * dmvnorm(X$x[i,], cluster.means[k,], (std^2)*diag(p))
                         }                    
                     }
                 }
                 prob.vec <- prob.vec / sum(prob.vec)
-                W[i,] <- prob.vec
+                prob.vec
             }
             # M-step
             if (K>0) {
@@ -67,12 +68,12 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.sd=NULL, sd=NULL,
                 cluster.means.old <- cluster.means
                 for (k in 1:K) {
                     H <- get.gaussian.posterior(prior.mean = prior.mean, 
-                                                prior.sd = prior.sd, 
-                                                sd = sd, 
+                                                prior.std = prior.std, 
+                                                std = std, 
                                                 x = X$x, 
                                                 weights = W[, k])
                     cluster.means[k, ] <- H$mean
-                    cluster.sds[k] <- H$sd 
+                    cluster.sds[k] <- H$std 
                 }
                 change <- sqrt(mean((cluster.means-cluster.means.old)^2) * p)
             } else {
@@ -96,8 +97,8 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.sd=NULL, sd=NULL,
             iter.since.stable <- 0
             # spin off a new cluster
             H.new <-  get.gaussian.posterior(prior.mean = prior.mean, 
-                                             prior.sd = prior.sd, 
-                                             sd = sd, 
+                                             prior.std = prior.std, 
+                                             std = std, 
                                              x = X$x, 
                                              weights = W[, K+1])
             # init mean with a random draw from posterior
@@ -105,8 +106,8 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.sd=NULL, sd=NULL,
             stopifnot(length(cluster.sds)==K)
             cluster.means <- rbind(cluster.means, mvrnorm(n=1, 
                                                           mu = H.new$mean, 
-                                                          Sigma = H.new$sd^2 * diag(p)))
-            cluster.sds <- c(cluster.sds, H.new$sd)
+                                                          Sigma = H.new$std^2 * diag(p)))
+            cluster.sds <- c(cluster.sds, H.new$std)
             K <- K+1
             W <- cbind(W, rep(0, N))
             if (verbose>0) {
@@ -116,7 +117,7 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.sd=NULL, sd=NULL,
             iter.since.stable <- iter.since.stable + 1
         }
         # remove a cluster
-        if (iter.since.stable>2) {
+        if (iter.since.stable>=0) {
             k <- which.min(cluster.sizes[1:K])
             if (cluster.sizes[k] < cluster.size.threshold & K>1) {
                 if (verbose>0) {
@@ -136,7 +137,7 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.sd=NULL, sd=NULL,
             }
         }
     }
-    params <- list(alpha=alpha, prior.mean=prior.mean, prior.sd=prior.sd, sd=sd, 
+    params <- list(alpha=alpha, prior.mean=prior.mean, prior.std=prior.std, std=std, 
                    posterior.predictive=posterior.predictive, cluster.size.threshold=cluster.size.threshold, 
                    max.iter=max.iter, max.inner.iter=max.inner.iter, max.stable.iter=max.stable.iter, 
                    inner.tol=inner.tol)
@@ -168,7 +169,7 @@ analyze.dpem.result <- function(dpem.result, X) {
     cluster.means.true.df <- data.frame(X$cluster.means)
     cluster.means.true.df$z <- factor(1:K)
     est.df <- dpem.result$display.df[1:K.est, ]
-    est.df$sd <- dpem.result$cluster.sds
+    est.df$std <- dpem.result$cluster.sds
     est.df$z <- factor(1:K.est)
     if (!is.null(X)) {
         # estimated clustering
@@ -183,8 +184,8 @@ analyze.dpem.result <- function(dpem.result, X) {
         # compare centroid estimate to true means
         fig.2 <- ggplot(est.df, aes(x=X1, y=X2, color=z)) + 
             geom_point(aes(shape="est")) + 
-            geom_errorbar(aes(ymin=X2-sd, ymax=X2+sd)) + 
-            geom_errorbarh(aes(xmin=X1-sd, xmax=X1+sd)) + 
+            geom_errorbar(aes(ymin=X2-std, ymax=X2+std)) + 
+            geom_errorbarh(aes(xmin=X1-std, xmax=X1+std)) + 
             geom_point(aes(x=X1, y=X2, color=z, shape="true"), size=3, data=cluster.means.true.df) 
         print(fig.2)
     }
