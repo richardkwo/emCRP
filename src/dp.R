@@ -39,6 +39,9 @@ sample.dp.normal.mixture <- function(N, alpha, std=1, prior.mean=0, prior.std=1)
             i <- i+1
         }
     }
+    colnames(x) <- NULL
+    row.names(x)<- NULL
+    
     # re-ordering clusters in decreasing size
     old.to.new <- rank(-cluster.sizes, ties.method = "first")
     new.to.old <- rep(0, num.clusters)

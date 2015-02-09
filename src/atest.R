@@ -1,4 +1,2 @@
-library(lineprof)
-source("dpEM.R")
-X <- sample.dp.normal.mixture(N = 1000, alpha = 2, prior.mean = c(0,0))
-l <- lineprof(dpem.results<-dp.EM.infer(X, posterior.predictive = T, verbose = T, cluster.size.threshold = 2))
+X <- sample.dp.normal.mixture(N = 1500, alpha = 2, std = 1, prior.std = 3, prior.mean = c(0,0))
+print(plot.dp.mixture(X))
