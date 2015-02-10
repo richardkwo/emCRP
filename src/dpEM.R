@@ -196,7 +196,7 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.std=NULL, std=NULL
 dp.EM.infer.multivariate <- function(X, alpha=NULL, 
                                      prior.mean=NULL, prior.scale.matrix=NULL, 
                                      prior.df=NULL, prior.precision.factor=NULL,
-                                     posterior.predictive=TRUE, random.init.cluster=TRUE, 
+                                     posterior.predictive=TRUE, random.init.cluster=TRUE, use.MLE=FALSE,
                                      cluster.size.threshold=3, 
                                      max.iter=100, max.inner.iter=100, max.stable.iter=5, 
                                      inner.tol=1e-2, tol=1e-3, 
@@ -208,6 +208,10 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
         if (verbose>0) {
             cat("alpha = ", alpha, "\n")
         }
+    }
+
+    if (use.MLE) {
+        stopifnot(!posterior.predictive)
     }
 
     use.reference.prior <- FALSE
@@ -231,6 +235,7 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
     cluster.scale.matrices <- list() # each is a p x p matrix, prior mean of Prec = (cluste.scale.matrix)^{-1} x cluster.df
     cluster.dfs <- NULL # (K+1), degree of freedom
     cluster.cov.MAPs <- list() # each p x p, the MAP estimate for the cov of each cluster
+    cluster.cov.MLEs <- list() # each p x p, the MLE estimate for the cov of each cluster
     
     K <- 0
     iter <- 0
@@ -271,6 +276,9 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
                             t.df <- cluster.dfs[k] - p + 1
                             t.scale.mat <- (cluster.precision.factors[k]+1)/(cluster.precision.factors[k] * t.df) * cluster.scale.matrices[[k]]
                             prob.vec[k] <- old.cluster.sizes[k] * dmvt(X$x[i,], delta=cluster.means[k,], sigma=t.scale.mat, df=t.df, log=FALSE)
+                        } else if (use.MLE) {
+                            # likelihood under MLE point estimate
+                            prob.vec[k] <- old.cluster.sizes[k] * dmvnorm(X$x[i,], mean=cluster.means[k,], sigma=cluster.cov.MLEs[[k]], log=FALSE)
                         } else {
                             # likelihood under point estimate
                             prob.vec[k] <- old.cluster.sizes[k] * dmvnorm(X$x[i,], mean=cluster.means[k,], sigma=cluster.cov.MAPs[[k]], log=FALSE)
@@ -282,35 +290,48 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
                 prob.vec # the return value to be combined by "foreach"
                 
             } # foreach ends
-            print(head(W))
-            print(cluster.cov.MAPs)
+            # print(head(W))
+            # print(cluster.cov.MAPs)
             # M-step - re-estimate the params of each cluster
             if (K>0) {
                 cluster.means.old <- cluster.means
+                cluster.scale.matrices.old <- cluster.scale.matrices
                 for (k in 1:K) {
                     # sufficient stats
-                    x.sum <- colSums(W[,k] * X$x)
+                    weighted.cov <- cov.wt(X$x, wt=W[,k], method="ML")
                     nc <- sum(W[,k])
-                    x.bar <- x.sum / nc
-                    scatter <- t(X$x - x.bar) %*% diag(W[,k]) %*% (X$x - x.bar)  # p x p scatter matrix
+                    x.bar <- weighted.cov$center
+                    x.sum <- x.bar * nc
+                    scatter <- weighted.cov$cov * nc
                     # hyper-param updates
-                    cluster.means[k,] <- (prior.precision.factor*prior.mean + x.sum)/(prior.precision.factor + nc)
-                    cluster.precision.factors[k] <- prior.precision.factor + nc
-                    cluster.dfs[k] <- prior.df + nc
-                    mean.difference.term <- prior.precision.factor * nc / (prior.precision.factor + nc) * (prior.mean - x.bar) %*% t((prior.mean - x.bar))
-                    cluster.scale.matrices[[k]] <- prior.scale.matrix + scatter + mean.difference.term
-                    if (use.reference.prior) {
-                        if (nc-d-1>0) {
-                            cluster.cov.MAPs[[k]] <- S / (nc-d-1)
-                        } else {
-                            cluster.cov.MAPs[[k]] <- S / nc # rare!
-                        }        
+                    if (use.MLE) {
+                        cluster.means[k,] <- x.bar
+                        cluster.cov.MLEs[[k]] <- weighted.cov$cov
                     } else {
-                        # TODO: double-check the formula
-                        cluster.cov.MAPs[[k]] <- cluster.scale.matrices[[k]] / (cluster.dfs[k] + p + 1)
+                        cluster.means[k,] <- (prior.precision.factor*prior.mean + x.sum)/(prior.precision.factor + nc)
+                        cluster.precision.factors[k] <- prior.precision.factor + nc
+                        cluster.dfs[k] <- prior.df + nc
+                        mean.difference.term <- prior.precision.factor * nc / (prior.precision.factor + nc) * (prior.mean - x.bar) %*% t((prior.mean - x.bar))
+                        cluster.scale.matrices[[k]] <- prior.scale.matrix + scatter + mean.difference.term
+                        if (use.reference.prior) {
+                            if (nc-d-1>0) {
+                                cluster.cov.MAPs[[k]] <- S / (nc-d-1)
+                            } else {
+                                cluster.cov.MAPs[[k]] <- S / nc # rare!
+                            }        
+                        } else {
+                            # TODO: double-check the formula
+                            cluster.cov.MAPs[[k]] <- cluster.scale.matrices[[k]] / (cluster.dfs[k] + p + 1)
+                        }
+                    }
+                    change.mean <- sqrt(sum((cluster.means[k,] - cluster.means.old[k,])^2))
+                    change.cov <- sqrt(sum((cluster.scale.matrices[[k]] - cluster.scale.matrices.old[[k]])^2))
+                    if (k==1) {
+                        change <- max(change.mean, change.cov)
+                    } else {
+                        change <- max(change, change.mean, change.cov)
                     }
                 }
-                change <- sqrt(mean((cluster.means[1:K,]-cluster.means.old[1:K,])^2) * p)
             } else {
                 change <- 0
             }
@@ -329,18 +350,25 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
                 print(display.df)
             }
         }
-        
+        print(cluster.cov.MLEs)
         if (stepwise.plot & K>0 & iter.since.stable<2) {
+            cat("plotting...\n")
             plot.df <- NULL
             z <- NULL
-            for (k in 1:(K+1)) {
-                for (l in 1:1000) {
+            for (k in 1:K) {
+                for (l in 1:200) {
                     # density estimate from draws ~ posterior predictive
                     if (k==K+1) {
+                        # from prior
                         R.draw <- rWishart(1, prior.df, solve(prior.scale.matrix))[,,1]
                         scale.mat.draw <- solve(R.draw)
                         mu.draw <- rmvnorm(1, prior.mean, 1/prior.precision.factor * scale.mat.draw)
+                    } else if (use.MLE) {
+                        # just likelihood
+                        mu.draw <- cluster.means[k,]
+                        scale.mat.draw <- cluster.cov.MLEs[[k]]
                     } else {
+                        # draw from posterior
                         R.draw <- rWishart(1, cluster.dfs[k], solve(cluster.scale.matrices[[k]]))[,,1]
                         scale.mat.draw <- solve(R.draw)
                         mu.draw <- rmvnorm(1, cluster.means[k,], 1/cluster.precision.factors[k] * scale.mat.draw)
@@ -360,8 +388,8 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
                 data.df <- data.frame(X$x)
             }
             fig <- ggplot(plot.df, aes(x=X1, y=X2)) + 
-                geom_density2d(aes(color=z)) + 
-                geom_point(data=data.df, alpha=.5) 
+                stat_ellipse(aes(color=z)) + 
+                geom_point(data=data.df, alpha=.3) 
             print(fig)
         }
         
@@ -378,10 +406,11 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
             stopifnot(length(cluster.cov.MAPs)==K)
             # init mean with a random draw from posterior
             ## sufficient stats
-            x.sum <- colSums(W[,K+1] * X$x)
+            weighted.cov <- cov.wt(X$x, wt=W[,K+1], method="ML")
             nc <- sum(W[,K+1])
-            x.bar <- x.sum / nc
-            scatter <- t(X$x - x.bar) %*% diag(W[,K+1]) %*% (X$x - x.bar)  # p x p scatter matrix
+            x.bar <- weighted.cov$center
+            x.sum <- x.bar * nc
+            scatter <- weighted.cov$cov * nc
             ## hyper-param updates
             mu.hat <- (prior.precision.factor*prior.mean + x.sum)/(prior.precision.factor + nc)
             r.hat <- prior.precision.factor + nc
@@ -391,9 +420,15 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
             ## draw
             if (random.init.cluster) {
                 # randomized hyper-params for the new cluster 
-                R.draw <- rWishart(1, nu.hat, solve(scale.hat))[,,1]
-                cluster.scale.matrices[[K+1]] <- solve(R.draw)
-                cluster.means <- rbind(cluster.means, rmvnorm(1, mu.hat, 1/r.hat * cluster.scale.matrices[[K+1]]))
+                if (use.MLE) {
+                    cluster.scale.matrices[[K+1]] <- scatter / nc
+                    cluster.cov.MLEs[[K+1]] <- scatter / nc
+                    cluster.means <- rbind(cluster.means, rmvnorm(1, x.bar, scatter/nc))
+                } else {
+                    R.draw <- rWishart(1, nu.hat, solve(scale.hat))[,,1]
+                    cluster.scale.matrices[[K+1]] <- solve(R.draw)
+                    cluster.means <- rbind(cluster.means, rmvnorm(1, mu.hat, 1/r.hat * cluster.scale.matrices[[K+1]]))                    
+                }
             } else {
                 # posterior estimated from w(*)
                 cluster.scale.matrices[[K+1]] <- scale.hat
@@ -418,6 +453,9 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
                 cat(sprintf("- cluster %d (with size %f) removed \n", k, cluster.sizes[k]))
             }
             # delete it and put weights back to *
+            if (use.MLE) {
+                cluster.cov.MLEs <- cluster.cov.MLEs[-k]
+            }
             cluster.means <- cluster.means[-k, ]
             cluster.scale.matrices <- cluster.scale.matrices[-k]
             cluster.dfs <- cluster.dfs[-k]
