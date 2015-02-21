@@ -59,6 +59,26 @@ gaussian.prob.kernel <- function(x, s2) {
     return ((s2)^(-p/2) * exp(-1/(2*s2) * sum(x^2)))
 }
 
+mixture.of.gaussian <- function(n=500, prop.vec=c(0.5,0.5), mean.vec=c(0,5), sd.vec=c(1,2)) {
+    K <- length(prop.vec)
+    stopifnot(length(mean.vec)==K & length(sd.vec)==K)
+    sample.fun <- function() {
+        k <- sample.int(K,size=1,prob=prop.vec)
+        x <- rnorm(n=1,mean=mean.vec[k], sd=sd.vec[k])
+        return(x)
+    }
+    samples <- replicate(n, sample.fun())
+    density.fun <- function(x) {
+        d <- rep(0, length(x))
+        for (k in 1:K) {
+            d <- d + prop.vec[k] * dnorm(x, mean=mean.vec[k], sd=sd.vec[k])
+        }
+        return(d)
+    }
+    return (list(x=samples, 
+                density.fun=density.fun))
+}
+
 multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
     require(grid)
     

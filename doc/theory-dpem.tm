@@ -353,7 +353,101 @@
   <math|<big|prod><rsub|i=1><rsup|n>P<around*|(|X<rsub|i>\|\<theta\><rsub|c>|)><rsup|w<rsub|i,c>>>
   when exponentiated.
 
+  <section|Examples>
+
+  <subsection|DP mixture of Gaussians with unknown mean and variance>
+
+  <paragraph|Model Specification>Each cluster <math|k> is associated with
+  parameters <math|\<theta\><rsub|c>=<around*|{|\<mu\><rsub|c>,\<tau\><rsub|c>|}>>,
+  where <math|\<tau\><rsub|c>=\<sigma\><rsub|c><rsup|-2>> is the precision.
+  The likelihood is\ 
+
+  <\equation*>
+    L<rsub|k><around*|(|X<rsub|i>\|\<mu\><rsub|c>,\<tau\><rsub|c>|)>=<sqrt|<frac|\<tau\><rsub|c>|2\<pi\>>>exp<around*|(|-<frac|\<tau\><rsub|c>|2><around*|(|X<rsub|i>-\<mu\><rsub|c>|)><rsup|2>|)><space|1em><around*|(|k=1,\<ldots\>,K|)>
+  </equation*>
+
+  The base measure is a Gaussian-Gamma prior\ 
+
+  <\equation*>
+    G<rsub|0><around*|(|\<mu\><rsub|c>,\<tau\><rsub|c>|)>=G<rsub|0><rprime|'><around*|(|\<mu\><rsub|c>\|\<tau\><rsub|c>|)>G<rsub|0><around*|(|\<tau\><rsub|c>|)>=N<around*|(|\<mu\><rsub|c>\|m<rsub|0>,<around*|(|\<kappa\><rsub|0>\<tau\><rsub|c>|)><rsup|-1>|)>Ga<around*|(|\<tau\><rsub|c>\|a<rsub|0>,rate=b<rsub|0>|)>.
+  </equation*>
+
+  <paragraph|Results>By updating the prior with weighted likelihood
+  <math|<big|prod><rsub|i=1><rsup|n>L<rsub|k><around*|(|X<rsub|i>\|\<mu\><rsub|c>,\<tau\><rsub|c>|)><rsup|w<rsub|i,c>>>,
+  we have the posterior for the <math|<around*|(|\<mu\><rsub|c>,\<tau\><rsub|c>|)>>
+  as\ 
+
+  <\equation*>
+    P<around*|(|\<mu\><rsub|c>\<comma\>\<tau\><rsub|c>\|<around*|{|X<rsub|i>|}>|)>=N<around*|(|\<mu\><rsub|c>\|m<rsub|n>,<around*|(|\<kappa\><rsub|n>\<tau\><rsub|c>|)><rsup|-1>|)>
+    Ga<around*|(|\<tau\><rsub|c>\|a<rsub|n>,b<rsub|n>|)>.
+  </equation*>
+
+  With sufficient statistics <math|n<rsub|c>=<big|sum><rsub|i=1><rsup|n>w<rsub|i,c>,>
+  <math|<wide|x|\<bar\>><rsub|c>=<frac|<big|sum><rsub|i>w<rsub|i,c>X<rsub|i>|<big|sum><rsub|i>w<rsub|i,c>>>
+  and <math|<wide|v|\<bar\>><rsub|c>=<frac|<big|sum><rsub|i>w<rsub|i,c><around*|(|X<rsub|i>-<wide|x|\<bar\>><rsub|c>|)><rsup|2>|<big|sum><rsub|i>w<rsub|i,c>>>,
+  the hyperparameters are updated as
+
+  <\equation*>
+    m<rsub|n>=<frac|\<kappa\><rsub|0>m<rsub|0>+n<rsub|c><wide|x|\<bar\>><rsub|c>|<wide|n|\<bar\>><rsub|c>+\<kappa\><rsub|0>>,
+  </equation*>
+
+  <\equation*>
+    \<kappa\><rsub|n>=\<kappa\><rsub|0>+n<rsub|c>,
+  </equation*>
+
+  <\equation*>
+    a<rsub|n>=a<rsub|0>+<frac|1|2>n<rsub|c>,
+  </equation*>
+
+  <\equation*>
+    b<rsub|n>=b<rsub|0>+<frac|1|2>n<rsub|c><wide|v|\<bar\>><rsub|c>+<frac|\<kappa\><rsub|0>n<rsub|c><around*|(|<wide|x|\<bar\>><rsub|c>-m<rsub|0>|)><rsup|2>|2<around*|(|\<kappa\><rsub|0>+n<rsub|c>|)>>.
+  </equation*>
+
+  The MLE estimates are\ 
+
+  <\equation*>
+    <wide|\<mu\>|^><rsub|c><rsup|<around*|(|MLE|)>>=<wide|x|\<bar\>><rsub|c>,<space|1em><wide|\<tau\><rsub|c><rsup|-1>|^><rsup|<around*|(|MLE|)>>=<wide|v|\<bar\>><rsub|c>.
+  </equation*>
+
+  The MAP estimates are\ 
+
+  <\equation*>
+    <wide|\<mu\><rsub|>|^><rsub|c><rsup|<around*|(|MAP|)>>=<frac|<wide|x|\<bar\>><rsub|c>+\<kappa\><rsub|0>m<rsub|0>/n<rsub|c>|1+\<kappa\><rsub|0>/n<rsub|c>>,<space|1em><wide|\<tau\>|^><rsub|c><rsup|<around*|(|MAP|)>>=<frac|a<rsub|n>-1|b<rsub|n>>.
+  </equation*>
+
   \;
+
+  <paragraph|Density Estimate>The posterior predictive for cluster
+  <math|k\<in\><around*|[|K|]>> is\ 
+
+  <\equation*>
+    P<rsub|c><around*|(|X\|<around*|{|X<rsub|i>|}>|)>=t<rsub|2a<rsub|n>><around*|(|X\|\<mu\>=\<mu\><rsub|n>,\<sigma\><rsup|2>=<frac|b<rsub|n><around*|(|\<kappa\><rsub|n>+1|)>|a<rsub|n>\<kappa\><rsub|n>>|)>=t<rsub|2a<rsub|n>><around*|(|<frac|X-\<mu\><rsub|n>|<sqrt|<frac|b<rsub|n><around*|(|\<kappa\><rsub|n>+1|)>|a<rsub|n>\<kappa\><rsub|n>>>>|)>.
+  </equation*>
+
+  The MLE estimate of density is\ 
+
+  <\equation*>
+    P<rsub|c><around*|(|X\|\<theta\><rsub|c><rsup|<around*|(|MLE|)>>|)>=N<around*|(|X\|<wide|x|\<bar\>><rsub|c>,<wide|v|\<bar\>><rsub|c>|)>.
+  </equation*>
+
+  The likelihood from cluster <math|\<ast\>> is still\ 
+
+  <\equation*>
+    P<rsub|\<ast\>><around*|(|X|)>=<big|int>N<around*|(|X\|\<mu\><rsub|\<ast\>>,\<tau\><rsup|-1><rsub|\<ast\>>|)>G<rsub|0><around*|(|\<mu\><rsub|\<ast\>>,\<tau\><rsub|\<ast\>>|)>\<mathd\>\<mu\><rsub|\<ast\>>\<mathd\>\<tau\><rsub|\<ast\>>=t<rsub|2a<rsub|0>><around*|(|X\|\<mu\>=m<rsub|0>,\<sigma\><rsup|2>=<frac|b<rsub|0><around*|(|\<kappa\><rsub|0>+1|)>|a<rsub|0>\<kappa\><rsub|0>>|)>
+  </equation*>
+
+  Therefore, the Bayesian predictive density estimate for the next
+  observation is\ 
+
+  <\eqnarray*>
+    <tformat|<table|<row|<cell|P<around*|(|X<rsub|n+1>\|<around*|{|X<rsub|i>|}>|)>>|<cell|=>|<cell|<big|sum><rsub|<around*|{|Z<rsub|i>|}>><big|sum><rsub|c\<in\><around*|[|K|]>\<cup\><around*|{|\<ast\>|}>>P<rsub|c><around*|(|X<rsub|n+1>\|<around*|{|X<rsub|i>|}>|)>P<around*|(|Z<rsub|n+1>=c\|<around*|{|Z<rsub|i>|}>|)>P<around*|(|<around*|{|Z<rsub|i>|}>\|<around*|{|X<rsub|i>|}>|)>>>|<row|<cell|>|<cell|\<approx\>>|<cell|<big|sum><rsub|k=1><rsup|K><frac|<big|sum><rsub|i=1><rsup|n>w<rsub|i,k>|n+\<alpha\>>P<rsub|c><around*|(|X<rsub|n+1>\|<around*|{|X<rsub|i>|}>|)>+<frac|<big|sum><rsub|i=1><rsup|n>w<rsub|i,\<ast\>>+\<alpha\>|n+\<alpha\>>P<rsub|\<ast\>><around*|(|X<rsub|n+1>|)>.>>>>
+  </eqnarray*>
+
+  The maximum likelihood density estimate is\ 
+
+  <\equation*>
+    P<around*|(|X<rsub|n+1>\|<around*|{|X<rsub|i>|}>|)>=<big|sum><rsub|k=1><rsup|K><frac|<big|sum><rsub|i=1><rsup|n>w<rsub|i,k>|n+\<alpha\>>N<around*|(|X<rsub|n+1>\|<wide|\<mu\>|^><rsub|c><rsup|<around*|(|MLE|)>>,<wide|\<tau\><rsub|c><rsup|-1>|^><rsup|<around*|(|MLE|)>>|)>+<frac|<big|sum><rsub|i=1><rsup|n>w<rsub|i,\<ast\>>+\<alpha\>|n+\<alpha\>>P<rsub|\<ast\>><around*|(|X<rsub|n+1>|)>
+  </equation*>
 </body>
 
 <\initial>
@@ -370,13 +464,17 @@
 <\references>
   <\collection>
     <associate|auto-1|<tuple|1|1>>
+    <associate|auto-10|<tuple|1|?>>
+    <associate|auto-11|<tuple|2|?>>
+    <associate|auto-12|<tuple|3|?>>
     <associate|auto-2|<tuple|1|1>>
     <associate|auto-3|<tuple|2|2>>
-    <associate|auto-4|<tuple|3|2>>
+    <associate|auto-4|<tuple|3|3>>
     <associate|auto-5|<tuple|3.1|3>>
     <associate|auto-6|<tuple|3.2|4>>
     <associate|auto-7|<tuple|3.3|5>>
     <associate|auto-8|<tuple|4|5>>
+    <associate|auto-9|<tuple|4.1|?>>
     <associate|eqs:EM|<tuple|1|3>>
     <associate|eqs:pik-prediction|<tuple|1|2>>
     <associate|fig:pik|<tuple|1|1>>
@@ -395,8 +493,8 @@
       <datoms|<macro|x|<repeat|<arg|x>|<with|font-series|medium|<with|font-size|1|<space|0.2fn>.<space|0.2fn>>>>>|<htab|5mm>>
       <no-break><pageref|auto-1><vspace|0.5fn>
 
-      <vspace*|1fn><with|font-series|<quote|bold>|math-font-series|<quote|bold>|2<space|2spc>Theoretical
-      Overview> <datoms|<macro|x|<repeat|<arg|x>|<with|font-series|medium|<with|font-size|1|<space|0.2fn>.<space|0.2fn>>>>>|<htab|5mm>>
+      <vspace*|1fn><with|font-series|<quote|bold>|math-font-series|<quote|bold>|2<space|2spc>Overview
+      of Objectives> <datoms|<macro|x|<repeat|<arg|x>|<with|font-series|medium|<with|font-size|1|<space|0.2fn>.<space|0.2fn>>>>>|<htab|5mm>>
       <no-break><pageref|auto-3><vspace|0.5fn>
 
       <vspace*|1fn><with|font-series|<quote|bold>|math-font-series|<quote|bold>|3<space|2spc>Theory
