@@ -94,7 +94,7 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.std=NULL, std=NULL
             }
         }
         # stepwise visualization
-        if (stepwise.plot & K>0 & iter.since.stable<3) {
+        if (stepwise.plot & K>0 & iter.since.stable<2) {
             plot.df <- NULL
             z <- NULL
             draw.size <- 1000
@@ -109,13 +109,14 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.std=NULL, std=NULL
             }
             plot.df <- data.frame(plot.df)
             plot.df$z <- factor(z)
-            plot.df$cluster.size <- c.size
             if (!exists("data.df")) {
                 data.df <- data.frame(X$x)
             }
+            data.df$w.unexplained <- W[,K+1]
             fig <- ggplot(plot.df, aes(x=X1, y=X2)) + 
-                geom_density2d(aes(color=z)) + 
-                geom_point(data=data.df, alpha=.5) 
+                stat_ellipse(aes(color=z)) + 
+                geom_point(aes(alpha=w.unexplained), data=data.df) + 
+                ggtitle(paste("Iter", iter, ", alpha=", alpha, ", gamma=", cluster.size.threshold))
             print(fig)
         }
         # add/remove cluster
@@ -196,9 +197,9 @@ dp.EM.infer <- function(X, alpha=NULL, prior.mean=NULL, prior.std=NULL, std=NULL
 dp.EM.infer.multivariate <- function(X, alpha=NULL, 
                                      prior.mean=NULL, prior.scale.matrix=NULL, 
                                      prior.df=NULL, prior.precision.factor=NULL,
-                                     posterior.predictive=TRUE, random.init.cluster=TRUE, use.MLE=FALSE,
+                                     posterior.predictive=TRUE, random.init.cluster=TRUE, use.MLE=FALSE, remove.cluster=TRUE,
                                      cluster.size.threshold=3, 
-                                     max.iter=100, max.inner.iter=100, max.stable.iter=5, 
+                                     max.iter=100, max.inner.iter=500, max.stable.iter=5, 
                                      inner.tol=1e-2, tol=1e-3, 
                                      verbose=1, stepwise.plot=FALSE) {
     N <- X$N
@@ -237,6 +238,8 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
     cluster.cov.MAPs <- list() # each p x p, the MAP estimate for the cov of each cluster
     cluster.cov.MLEs <- list() # each p x p, the MLE estimate for the cov of each cluster
     
+    cluster.creation.iter <- NULL
+
     K <- 0
     iter <- 0
     iter.since.stable <- 0
@@ -257,6 +260,9 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
             inner.iter <- inner.iter + 1
             # E step - estimate sample weights to each cluster
             old.cluster.sizes <- colSums(W)
+            if (verbose>1) {
+                print(old.cluster.sizes)    
+            }
             W <- foreach (i = 1:N, .combine=rbind) %dopar% { 
                 prob.vec <- rep(0, K+1)
                 # prob of * (denoted by K+1)
@@ -265,6 +271,10 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
                 one.sample.scale.mat <- prior.scale.matrix + prior.precision.factor/(prior.precision.factor+1) * (prior.mean-X$x[i,]) %*% t(prior.mean-X$x[i,])
                 log.prob.asterisk <- log.prob.fixed.part + prior.df/2*log(det(prior.scale.matrix)) - (prior.df+1)/2*log(det(one.sample.scale.mat))
                 prob.vec[K+1] <-  alpha * exp(log.prob.asterisk)
+                ## shouldn't it be a t? 
+                t.df <- prior.df - p + 1
+                t.scale.mat <- (prior.precision.factor+1) / (prior.precision.factor * t.df) * prior.scale.matrix
+                prob.vec[K+1] <- alpha * dmvt(X$x[i,], delta=prior.mean, sigma=t.scale.mat, df=t.df, log=FALSE) # TODO: fix
                 stopifnot(prob.vec[K+1]>=0)
                 # prob of clusters
                 if (K>0) {
@@ -290,6 +300,12 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
                 prob.vec # the return value to be combined by "foreach"
                 
             } # foreach ends
+            
+            # early breaking
+            if (min(colSums(W)[1:K]) < cluster.size.threshold * 0.8) {
+                break
+            }
+
             # print(head(W))
             # print(cluster.cov.MAPs)
             # M-step - re-estimate the params of each cluster
@@ -350,7 +366,96 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
                 print(display.df)
             }
         }
-        print(cluster.cov.MLEs)
+
+        w.unexplained <- W[,K+1]
+
+        # add/remove cluster
+        iter.since.stable <- iter.since.stable + 1
+        # add a new cluster?
+        if (new.cluster.size>cluster.size.threshold) {
+            iter.since.stable <- 0
+            # spin off a new cluster
+            stopifnot(nrow(cluster.means)==K) # TODO: remove those asserts
+            stopifnot(length(cluster.precision.factors)==K)
+            stopifnot(length(cluster.scale.matrices)==K)
+            stopifnot(length(cluster.dfs)==K)
+            stopifnot(length(cluster.cov.MAPs)==K)
+            # init mean with a random draw from posterior
+            ## sufficient stats
+            weighted.cov <- cov.wt(X$x, wt=W[,K+1], method="ML")
+            nc <- sum(W[,K+1])
+            x.bar <- weighted.cov$center
+            x.sum <- x.bar * nc
+            scatter <- weighted.cov$cov * nc
+            ## hyper-param updates
+            mu.hat <- (prior.precision.factor*prior.mean + x.sum)/(prior.precision.factor + nc)
+            r.hat <- prior.precision.factor + nc
+            nu.hat <- prior.df + nc
+            diff.term <- prior.precision.factor * nc / (prior.precision.factor + nc) * (prior.mean - x.bar) %*% t((prior.mean - x.bar))
+            scale.hat <- prior.scale.matrix + scatter + diff.term         
+            ## draw random init
+            if (random.init.cluster) {
+                # randomized hyper-params for the new cluster 
+                if (use.MLE) {
+                    cluster.scale.matrices[[K+1]] <- scatter / nc
+                    cluster.cov.MLEs[[K+1]] <- scatter / nc
+                    cluster.means <- rbind(cluster.means, rmvnorm(1, x.bar, scatter/nc))
+                } else {
+                    R.draw <- rWishart(1, nu.hat, solve(scale.hat))[,,1]
+                    cluster.scale.matrices[[K+1]] <- solve(R.draw)
+                    cluster.means <- rbind(cluster.means, rmvnorm(1, mu.hat, 1/r.hat * cluster.scale.matrices[[K+1]]))                    
+                }
+            } else {
+                # posterior estimated from w(*)
+                cluster.scale.matrices[[K+1]] <- scale.hat
+                if (use.MLE) {
+                    cluster.cov.MLEs[[K+1]] <- scatter / nc
+                    cluster.means <- rbind(cluster.means, x.bar)
+                } else {
+                    cluster.means <- rbind(cluster.means, mu.hat)
+                }
+            }
+            cluster.dfs[K+1] <- nu.hat
+            cluster.precision.factors[K+1] <- r.hat
+            cluster.cov.MAPs[[K+1]] <- scale.hat / (nu.hat + p + 1) # TODO: double-check & fix replicated code
+            cluster.creation.iter[K+1] <- iter
+            # increment
+            K <- K+1
+            W <- cbind(W, rep(0, N))
+            if (verbose>0) {
+                cat("* new cluster created at", cluster.means[K, ], "\n")
+            }
+        }
+        # remove a cluster ?
+        k <- which.min(cluster.sizes[1:K]) 
+        if (remove.cluster & cluster.sizes[k] < cluster.size.threshold & K>1) {
+            # if new cluster created, its size must be > the threshold, 
+            # so it won't be removed immediately
+            if (verbose>0) {
+                cat(sprintf("- cluster %d (with size %f) removed \n", k, cluster.sizes[k]))
+            }
+            # delete it and put weights back to *
+            if (use.MLE) {
+                cluster.cov.MLEs <- cluster.cov.MLEs[-k]
+            }
+            cluster.means <- cluster.means[-k, ]
+            cluster.scale.matrices <- cluster.scale.matrices[-k]
+            cluster.dfs <- cluster.dfs[-k]
+            cluster.precision.factors <- cluster.precision.factors[-k]
+            cluster.cov.MAPs <- cluster.cov.MAPs[-k]
+            W[, K+1] <- W[, K+1] + W[, k]
+            W <- W[, -k]
+            K <- K - 1
+            iter.since.stable <- 0
+
+            # TODO: fix it
+            if (cluster.creation.iter[K]==iter-1) {
+                iter.since.stable <- max.stable.iter
+                change <- 0
+                cat("\nJust removed a newly created cluster -- going to exit\n")
+            }
+        }
+
         if (stepwise.plot & K>0 & iter.since.stable<2) {
             cat("plotting...\n")
             plot.df <- NULL
@@ -382,95 +487,26 @@ dp.EM.infer.multivariate <- function(X, alpha=NULL,
                 }
             }
             colnames(plot.df) <- NULL
+            row.names(plot.df) <- NULL
             plot.df <- data.frame(plot.df)
             plot.df$z <- factor(z)
             if (!exists("data.df")) {
                 data.df <- data.frame(X$x)
             }
+            data.df$w.unexplained <- w.unexplained
             fig <- ggplot(plot.df, aes(x=X1, y=X2)) + 
                 stat_ellipse(aes(color=z)) + 
-                geom_point(data=data.df, alpha=.3) 
+                geom_point(aes(alpha=w.unexplained), data=data.df) +
+                ggtitle(paste("Iter", iter, ", alpha =", alpha, ", gamma =", cluster.size.threshold, "(with", inner.iter, "inner iters)"))
             print(fig)
         }
-        
-        # add/remove cluster
-        iter.since.stable <- iter.since.stable + 1
-        # add a new cluster?
-        if (new.cluster.size>cluster.size.threshold) {
-            iter.since.stable <- 0
-            # spin off a new cluster
-            stopifnot(nrow(cluster.means)==K) # TODO: remove those asserts
-            stopifnot(length(cluster.precision.factors)==K)
-            stopifnot(length(cluster.scale.matrices)==K)
-            stopifnot(length(cluster.dfs)==K)
-            stopifnot(length(cluster.cov.MAPs)==K)
-            # init mean with a random draw from posterior
-            ## sufficient stats
-            weighted.cov <- cov.wt(X$x, wt=W[,K+1], method="ML")
-            nc <- sum(W[,K+1])
-            x.bar <- weighted.cov$center
-            x.sum <- x.bar * nc
-            scatter <- weighted.cov$cov * nc
-            ## hyper-param updates
-            mu.hat <- (prior.precision.factor*prior.mean + x.sum)/(prior.precision.factor + nc)
-            r.hat <- prior.precision.factor + nc
-            nu.hat <- prior.df + nc
-            diff.term <- prior.precision.factor * nc / (prior.precision.factor + nc) * (prior.mean - x.bar) %*% t((prior.mean - x.bar))
-            scale.hat <- prior.scale.matrix + scatter + diff.term         
-            ## draw
-            if (random.init.cluster) {
-                # randomized hyper-params for the new cluster 
-                if (use.MLE) {
-                    cluster.scale.matrices[[K+1]] <- scatter / nc
-                    cluster.cov.MLEs[[K+1]] <- scatter / nc
-                    cluster.means <- rbind(cluster.means, rmvnorm(1, x.bar, scatter/nc))
-                } else {
-                    R.draw <- rWishart(1, nu.hat, solve(scale.hat))[,,1]
-                    cluster.scale.matrices[[K+1]] <- solve(R.draw)
-                    cluster.means <- rbind(cluster.means, rmvnorm(1, mu.hat, 1/r.hat * cluster.scale.matrices[[K+1]]))                    
-                }
-            } else {
-                # posterior estimated from w(*)
-                cluster.scale.matrices[[K+1]] <- scale.hat
-                cluster.means <- rbind(cluster.means, mu.hat)
-            }
-            cluster.dfs[K+1] <- nu.hat
-            cluster.precision.factors[K+1] <- r.hat
-            cluster.cov.MAPs[[K+1]] <- scale.hat / (nu.hat + p + 1) # TODO: double-check & fix replicated code
-            # increment
-            K <- K+1
-            W <- cbind(W, rep(0, N))
-            if (verbose>0) {
-                cat("* new cluster created at", cluster.means[K, ], "\n")
-            }
-        }
-        # remove a cluster ?
-        k <- which.min(cluster.sizes[1:K]) 
-        if (cluster.sizes[k] < cluster.size.threshold & K>1) {
-            # if new cluster created, its size must be > the threshold, 
-            # so it won't be removed immediately
-            if (verbose>0) {
-                cat(sprintf("- cluster %d (with size %f) removed \n", k, cluster.sizes[k]))
-            }
-            # delete it and put weights back to *
-            if (use.MLE) {
-                cluster.cov.MLEs <- cluster.cov.MLEs[-k]
-            }
-            cluster.means <- cluster.means[-k, ]
-            cluster.scale.matrices <- cluster.scale.matrices[-k]
-            cluster.dfs <- cluster.dfs[-k]
-            cluster.precision.factors <- cluster.precision.factors[-k]
-            cluster.cov.MAPs <- cluster.cov.MAPs[-k]
-            W[, K+1] <- W[, K+1] + W[, k]
-            W <- W[, -k]
-            K <- K - 1
-            iter.since.stable <- 0
-        }
+
         if (iter.since.stable>=max.stable.iter & change<tol) {
             break
         }
         
     }
+
     if (iter>max.iter) {
         warning(sprintf("Algorithm terminated when reaching max.iter=%d", max.iter))
     }
