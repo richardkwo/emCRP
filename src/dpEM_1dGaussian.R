@@ -224,7 +224,7 @@ dp.EM.infer.1D.Gaussian <- function(X, alpha=NULL,
             d.map <- density.est.mle(x.seq)
             d.Bayes <- density.est.Bayes(x.seq)
             max.d <- max(max(d.mle), max(d.map), max(d.Bayes), max(d.true)) * 1.1
-            plot(x.seq, d.mle, t="l", col="blue", main=sprintf("iter %d, K=%d", iter, K), 
+            plot(x.seq, d.mle, t="l", col="blue", main=sprintf("iter %d, K=%d", inner.iter, K), 
                  ylim=c(0,max.d))
 #             lines(x.seq, d.map, t="l", col="brown")
             lines(x.seq, d.Bayes, t="l", col="darkgreen")
